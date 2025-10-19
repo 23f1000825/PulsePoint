@@ -1,11 +1,15 @@
-import os 
+import os
+from dotenv import load_dotenv
+
+# Load .env file
+load_dotenv()
 
 class Config:
-    #Secret key is used by flask to protect session data and forms from hinderance
-    SECRET_KEY = os.environ.get('SECRET_KEY') or 'dev_scret_key'
+    # Secret key is used by Flask to protect session data and forms
+    SECRET_KEY = os.getenv('SECRET_KEY', 'dev_secret_key')
 
-    #Database config: using sqLite file stored in 'instance/hospital.db'
-    SQLALCHEMY_DATABASE_URI = 'sqlite:///hospital.db'
+    # Database URI (can come from .env or fallback to local SQLite)
+    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL', 'sqlite:///hospital.db')
 
-    #disable modeification tracking (save resources)
+    # Disable modification tracking to save resources
     SQLALCHEMY_TRACK_MODIFICATIONS = False
