@@ -1,98 +1,59 @@
-import os
-from flask import Flask, render_template, request, redirect, url_for, flash, session
+from flask import Flask, jsonify
 from flask_sqlalchemy import SQLAlchemy
-from werkzeug.security import generate_password_hash, check_password_hash
+from flask_login import LoginManager
+from flask_migrate import Migrate
+from config import Config
 
-# Ensure the instance folder exists (for hospital.db)
-os.makedirs("instance", exist_ok=True)
+# ------------------- Initialize Core Extensions -------------------
+db = SQLAlchemy()
+login_manager = LoginManager()
+migrate = Migrate()  # Handles DB migrations
 
-app = Flask(__name__)
+# ------------------- App Factory -------------------
+def create_app():
+    """
+    Application Factory Pattern:
+    Initializes Flask app, extensions, blueprints, and login manager.
+    """
+    app = Flask(__name__)
+    app.config.from_object(Config)
 
-# App configuration
-app.config['SECRET_KEY'] = 'your_secret_key'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///instance/hospital.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    # ------------------- Initialize Extensions -------------------
+    db.init_app(app)
+    migrate.init_app(app, db)
+    login_manager.init_app(app)
+    login_manager.login_view = 'auth.login'  # Redirect unauthorized users
 
-db = SQLAlchemy(app)
+    # ------------------- Register Blueprints -------------------
+    from routes.authRoutes import auth
+    from routes.patientRoute import patient_bp
+    app.register_blueprint(patient_bp)
+    app.register_blueprint(auth)
 
-class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(150), unique=True, nullable=False)
-    password = db.Column(db.String(150), nullable=False)
-    role = db.Column(db.String(50), nullable=False)  # 'admin', 'customer', or 'professional'
-    approve = db.Column(db.Boolean, default=False)
-    blocked = db.Column(db.Boolean, default=False)
+    # ------------------- Import Models -------------------
+    from models import User  # Import models after db initialization
 
-@app.route('/adminlogin', methods=['GET', 'POST'])
-def adminlogin():
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        user = User.query.filter_by(username=username, role='admin').first()
-        if user and check_password_hash(user.password, password):
-            session['adminuserid'] = user.id
-            session['role'] = user.role
-            flash('Admin login successful!', 'success')
-            return redirect(url_for('dashboard'))
-        flash('Invalid Credentials', 'danger')
-    return render_template('login.html')
+    # ------------------- Flask-Login User Loader -------------------
+    @login_manager.user_loader
+    def load_user(user_id):
+        """
+        Given a user ID, return the User object from the database.
+        Required by Flask-Login to manage user sessions.
+        """
+        return User.query.get(int(user_id))
 
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        user = User.query.filter(User.username == username, User.role.in_(['customer', 'professional'])).first()
-        if user and check_password_hash(user.password, password):
-            session['userid'] = user.id
-            session['role'] = user.role
-            if user.role == 'customer':
-                if not user.approve:
-                    flash('Your account is not approved yet! Please wait for the admin to approve.', 'danger')
-                    return redirect(url_for('login'))
-                if user.blocked:
-                    flash('Your account is blocked! Please contact the admin.', 'danger')
-                    return redirect(url_for('login'))
-                flash('Patient login successful!', 'success')
-                return redirect(url_for('dashboard'))
-            elif user.role == 'professional':
-                if not user.approve:
-                    flash('Your account is not approved yet! Please wait for the admin to approve.', 'danger')
-                    return redirect(url_for('login'))
-                if user.blocked:
-                    flash('Your account is blocked! Please contact the admin.', 'danger')
-                    return redirect(url_for('login'))
-                flash('Doctor login successful!', 'success')
-                return redirect(url_for('dashboard'))
-        flash('Invalid Credentials', 'danger')
-    return render_template('login.html')
+    # ------------------- Error Handlers -------------------
+    @app.errorhandler(404)
+    def page_not_found(e):
+        return jsonify({"error": "Resource not found"}), 404
 
-@app.route('/register', methods=['GET', 'POST'])
-def register():
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        role = request.form['role']  # admin, customer, professional
-        # For testing, set approve=True for admin and doctor to make login easier
-        approve = True if role == 'admin' or role == 'professional' else False
-        hashed_password = generate_password_hash(password)
-        user = User(username=username, password=hashed_password, role=role, approve=approve)
-        db.session.add(user)
-        db.session.commit()
-        flash(f'Registered {role} successfully!', 'success')
-        return redirect(url_for('login'))
-    return render_template('register.html')
+    @app.errorhandler(500)
+    def internal_error(e):
+        return jsonify({"error": "Internal server error"}), 500
 
-@app.route('/dashboard')
-def dashboard():
-    return render_template('dashboard.html')
+    # ------------------- Default Route -------------------
+    @app.route('/')
+    def home():
+        return jsonify({"message": "Welcome to the Hospital Management System Backend!"})
 
-@app.route('/')
-def home():
-    return render_template('home.html')
-
-if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()  # Ensures tables are created
-    app.run(debug=True)
-
+    return app
